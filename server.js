@@ -1,3 +1,18 @@
+// Servidor HTTP para o Render (mantém o serviço ativo)
+const express = require("express");
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/healthz", (req, res) => {
+  res.status(200).send("ok");
+});
+
+app.listen(PORT, () => {
+  console.log("Health server rodando na porta", PORT);
+});
+
+
+
 // server.js
 const admin = require('firebase-admin');
 
