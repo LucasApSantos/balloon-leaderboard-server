@@ -64,19 +64,28 @@ async function removeInvalidTokens(uid, invalidTokens) {
 
 async function sendNotificationAndCleanup(uid, tokens, title, body) {
   if (!Array.isArray(tokens) || tokens.length === 0) return;
-  try {
-    const res = await messaging.sendMulticast({
-      tokens,
-      notification: { title, body }
-    });
 
-    // coletar tokens inválidos
+  try {
+    // Para cada token, criamos uma mensagem individual
+    const messages = tokens.map(token => ({
+      token,
+      notification: { title, body }
+    }));
+
+    // Envia uma por uma usando a nova API v1
+    const responses = await Promise.all(
+      messages.map(msg => messaging.send(msg).then(() => ({ success: true })).catch(err => ({ success: false, error: err })))
+    );
+
+    // Verifica falhas para remover tokens inválidos
     const invalidTokens = [];
-    res.responses.forEach((r, idx) => {
+    responses.forEach((r, idx) => {
       if (!r.success) {
         const err = r.error;
-        // códigos comuns: 'messaging/registration-token-not-registered', 'messaging/invalid-registration-token'
-        if (err && (err.code === 'messaging/registration-token-not-registered' || err.code === 'messaging/invalid-registration-token')) {
+        if (
+          err.code === 'messaging/registration-token-not-registered' ||
+          err.code === 'messaging/invalid-registration-token'
+        ) {
           invalidTokens.push(tokens[idx]);
         }
       }
@@ -86,11 +95,16 @@ async function sendNotificationAndCleanup(uid, tokens, title, body) {
       await removeInvalidTokens(uid, invalidTokens);
     }
 
-    console.log(`Notificação enviada a ${tokens.length} tokens. Sucesso: ${res.successCount}, Falha: ${res.failureCount}`);
+    const successCount = responses.filter(r => r.success).length;
+    const failureCount = responses.length - successCount;
+
+    console.log(`Notificação enviada via FCM v1. Sucesso: ${successCount}, Falhas: ${failureCount}`);
+
   } catch (err) {
-    console.error("Erro ao enviar notificação:", err);
+    console.error("Erro ao enviar notificação (v1):", err);
   }
 }
+
 
 async function startListener() {
   await initScores();
