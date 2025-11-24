@@ -4,8 +4,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get("/healthz", (req, res) => {
+  res.setHeader("Content-Type", "text/plain");
+  res.setHeader("Cache-Control", "no-cache");
   res.status(200).send("ok");
 });
+
+app.get("/ping", (req, res) => res.send("pong"));
+
+
 
 app.listen(PORT, () => {
   console.log("Health server rodando na porta", PORT);
@@ -63,47 +69,55 @@ async function removeInvalidTokens(uid, invalidTokens) {
 }
 
 async function sendNotificationAndCleanup(uid, tokens, title, body) {
-  if (!Array.isArray(tokens) || tokens.length === 0) return;
+  if (!tokens || tokens.length === 0) return;
 
   try {
-    // Para cada token, criamos uma mensagem individual
     const messages = tokens.map(token => ({
-      token,
-      notification: { title, body }
+      token: token,
+      notification: {
+        title: title,
+        body: body
+      }
     }));
 
-    // Envia uma por uma usando a nova API v1
-    const responses = await Promise.all(
-      messages.map(msg => messaging.send(msg).then(() => ({ success: true })).catch(err => ({ success: false, error: err })))
-    );
+    // FCM v1 doesn't support batch on server, so send sequentially
+    const results = [];
 
-    // Verifica falhas para remover tokens inválidos
+    for (const msg of messages) {
+      try {
+        await messaging.send(msg);
+        results.push({ success: true });
+      } catch (err) {
+        results.push({ success: false, error: err });
+      }
+    }
+
     const invalidTokens = [];
-    responses.forEach((r, idx) => {
+    results.forEach((r, i) => {
       if (!r.success) {
-        const err = r.error;
-        if (
-          err.code === 'messaging/registration-token-not-registered' ||
-          err.code === 'messaging/invalid-registration-token'
-        ) {
-          invalidTokens.push(tokens[idx]);
+        const code = r.error?.errorInfo?.code;
+
+        if (code === "messaging/registration-token-not-registered" ||
+            code === "messaging/invalid-registration-token") {
+          invalidTokens.push(tokens[i]);
         }
       }
     });
 
-    if (invalidTokens.length) {
+    if (invalidTokens.length > 0) {
+      console.log("Removendo tokens inválidos:", invalidTokens);
       await removeInvalidTokens(uid, invalidTokens);
     }
 
-    const successCount = responses.filter(r => r.success).length;
-    const failureCount = responses.length - successCount;
+    console.log(
+      `FCM v1 OK — Sucesso: ${results.filter(r => r.success).length} | Falha: ${results.filter(r => !r.success).length}`
+    );
 
-    console.log(`Notificação enviada via FCM v1. Sucesso: ${successCount}, Falhas: ${failureCount}`);
-
-  } catch (err) {
-    console.error("Erro ao enviar notificação (v1):", err);
+  } catch (e) {
+    console.error("Erro FCM v1 final:", e);
   }
 }
+
 
 
 async function startListener() {
